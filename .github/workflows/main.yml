@@ -1,0 +1,84 @@
+name: rootfs
+
+on:
+  push:
+    branches: [ "master" ]
+  pull_request:
+    branches: [ "master" ]
+  workflow_dispatch:
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        version: [6.7-working, 6.8]
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- 释放磁盘空间 (可选，内核编译一般够用，加上更稳) ---
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false # 不清理工具缓存，加快速度
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Install Dependencies
+        run: sudo apt update && sudo apt install build-essential gcc-aarch64-linux-gnu bc flex bison 7zip kmod bash cpio binutils tar git wget dpkg libssl-dev
+
+      - name: Build kernel
+        run: sudo sh nabu-kernel_build.sh ${{ matrix.version }}
+
+      - name: Upload deb packages
+        uses: actions/upload-artifact@v4.0.0
+        with:
+          name: xiaomi-nabu-debs_${{ matrix.version }}
+          path: ${{ github.workspace }}/*.deb
+          
+  rootfs:
+    runs-on: ubuntu-24.04
+    needs: kernel
+    strategy:
+      fail-fast: false
+      matrix:
+        desktop: [ubuntu-desktop, lomiri]
+        kernel: [6.7-working, 6.8]
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- 关键：释放磁盘空间 (rootfs 构建必加) ---
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: xiaomi-nabu-debs*
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y unzip build-essential gcc-aarch64-linux-gnu bc flex bison kmod bash cpio binutils tar git wget dpkg libssl-dev
+          sudo apt install -y 7zip || sudo apt install -y p7zip-full
+
+      - name: Build rootfs
+        run: sudo sh nabu-rootfs_build.sh ${{ matrix.desktop }} ${{ matrix.kernel }}
+
+      - name: Upload rootfs.7z
+        uses: actions/upload-artifact@v4.0.0
+        with:
+          name: rootfs_${{ matrix.desktop }}_${{ matrix.kernel }}
+          path: rootfs.7z
+          compression-level: 0
